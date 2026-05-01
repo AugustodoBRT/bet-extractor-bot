@@ -1,0 +1,7 @@
+python-telegram-bot
+pytesseract
+pillow
+groq
+gspread
+google-auth-oauthlib
+python-dotenv
