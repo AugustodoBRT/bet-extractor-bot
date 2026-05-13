@@ -13,12 +13,11 @@ from processar_apostas import processar_aposta
 # ===============================
 # CONFIG DOS BOTS
 # ===============================
-BOTS = [
-    {"token": os.getenv("TOKEN_FUTEBOL", ""), "esporte": "Futebol"},
-    {"token": os.getenv("TOKEN_NBA", ""), "esporte": "NBA"},
-    {"token": os.getenv("TOKEN_NHL", ""), "esporte": "NHL"},
-    {"token": os.getenv("TOKEN_OUTROS", ""), "esporte": "Outros"},
-]
+# Agora usa apenas um bot para o grupo.
+TOKEN = os.getenv("TOKEN_GERAL") or os.getenv("TOKEN_FUTEBOL")
+if not TOKEN:
+    print("❌ Token não configurado. Defina TOKEN_GERAL no arquivo .env!")
+    exit(1)
 
 os.makedirs(config.PASTA_IMAGENS, exist_ok=True)
 
@@ -28,62 +27,40 @@ os.makedirs(config.PASTA_IMAGENS, exist_ok=True)
 ALBUM_BUFFER = {}
 ALBUM_TASKS = {}
 
+def get_msg(update):
+    return update.message or update.edited_message or getattr(update, 'channel_post', None) or getattr(update, 'edited_channel_post', None)
+
 def criar_handler(nome_esporte):
     async def processer_mensagens(updates, context):
         try:
             import re
             partes = []
             tipsters_encontrados = []
+            message_ids = []
             
             # 1. Extrair informações de texto, caption e tipster de todas as mensagens
             for update in updates:
-                msg = update.message
-                tipster = ""
-                
-                if msg.forward_origin:
-                    origem = msg.forward_origin
-                    nome_bruto = ""
-                    if origem.type == "user":
-                        nome_bruto = origem.sender_user.full_name
-                    elif origem.type == "hidden_user":
-                        nome_bruto = origem.sender_user_name
-                    elif origem.type in ["chat", "channel"]:
-                        nome_bruto = origem.chat.title
-                        assinatura = getattr(origem, 'author_signature', None)
-                        if assinatura:
-                            nome_bruto = f"{nome_bruto} ({assinatura})"
-                        
-                    if nome_bruto and "(" in nome_bruto and ")" in nome_bruto:
-                        match = re.search(r'\(([^)]+)\)', nome_bruto)
-                        if match:
-                            tipster = match.group(1).strip()
-                        else:
-                            tipster = nome_bruto
-                    elif nome_bruto:
-                        tipster = nome_bruto
-                        
-                elif getattr(msg, 'forward_from_chat', None):
-                    nome_bruto = msg.forward_from_chat.title
-                    if nome_bruto and "(" in nome_bruto and ")" in nome_bruto:
-                        match = re.search(r'\(([^)]+)\)', nome_bruto)
-                        if match:
-                            tipster = match.group(1).strip()
-                        else:
-                            tipster = nome_bruto
-                    else:
-                        tipster = nome_bruto
-                elif getattr(msg, 'forward_from', None):
-                    tipster = msg.forward_from.full_name
-                elif getattr(msg, 'forward_sender_name', None):
-                    tipster = msg.forward_sender_name
-
-                # Normalizar nome do tipster
+                msg = get_msg(update)
+                if not msg:
+                    continue
+                    
+                message_ids.append(msg.message_id)
+                # O tipster agora é o remetente da mensagem no grupo ou assinatura do canal
+                if getattr(msg, 'author_signature', None):
+                    tipster = msg.author_signature
+                elif msg.from_user:
+                    tipster = msg.from_user.full_name
+                elif getattr(msg, 'sender_chat', None):
+                    tipster = msg.sender_chat.title
+                else:
+                    tipster = ""
+                    
+                # Simplificação de nomes
                 if tipster:
-                    t_lower = tipster.lower()
-                    if "meckler" in t_lower or "lucas meckler" in t_lower:
-                        tipster = "Meckler"
-                    elif "emanuel" in t_lower or "oliveira" in t_lower:
+                    if "Emanuel Oliv" in tipster or "Emanuel Oliveira" in tipster:
                         tipster = "Emanuel"
+                    elif "Lucas Meckler" in tipster:
+                        tipster = "Meckler"
                 
                 if tipster and tipster not in tipsters_encontrados:
                     tipsters_encontrados.append(tipster)
@@ -95,13 +72,26 @@ def criar_handler(nome_esporte):
                 # texto (caso não tenha foto)
                 if msg.text:
                     partes.append(msg.text.strip())
+            
+            # Filtro Estrito: Verifica se tem a estrutura de aposta no texto
+            texto_completo = "\n".join(partes).lower()
+            if not ("@" in texto_completo or "odd" in texto_completo):
+                return # Ignora silenciosamente se não tiver o símbolo da odd
 
+
+
+            # Filtro Estrito: Verifica se tem foto (aposta sempre tem OCR da tip)
+            tem_foto = any(get_msg(m).photo for m in updates if get_msg(m))
+            if not tem_foto:
+                return # Ignora silenciosamente
+                
             # 2. Extrair imagens sequencialmente (espera as tarefas)
             for update in updates:
-                if update.message.photo:
-                    await update.message.reply_text("⏳ Lendo imagem...")
+                msg = get_msg(update)
+                if msg and msg.photo:
+                    # await msg.reply_text("⏳ Lendo imagem...")
                     
-                    foto_alta_resolucao = update.message.photo[-1]
+                    foto_alta_resolucao = msg.photo[-1]
                     try:
                         file = await foto_alta_resolucao.get_file()
                         caminho = f"{config.PASTA_IMAGENS}/{file.file_id}.jpg"
@@ -111,32 +101,49 @@ def criar_handler(nome_esporte):
                         if ocr:
                             partes.append(f"[IMAGEM]:\n{ocr}")
                             print("✅ OCR da imagem concluído")
+                            
+                        # Apaga a imagem logo após o OCR para não lotar o disco
+                        if os.path.exists(caminho):
+                            os.remove(caminho)
+                            
                     except Exception as e:
                         print(f"⚠️ Erro ao processar imagem: {e}")
 
             if not partes:
-                await updates[0].message.reply_text("⚠️ Sem texto.")
+                primeiro_msg = get_msg(updates[0])
+                # if primeiro_msg:
+                #     await primeiro_msg.reply_text("⚠️ Sem texto.")
                 return
 
             texto_final = "\n\n-----\n\n".join(partes)
             tipster_final = tipsters_encontrados[0] if tipsters_encontrados else ""
 
             print("\n" + "="*50)
-            print(f"📩 [{nome_esporte}] TEXTO FINAL COMBINADO:\n")
+            print(f"📩 TEXTO FINAL COMBINADO:\n")
             print(texto_final)
             print("="*50 + "\n")
 
-            processar_aposta(texto_final, nome_esporte, tipster_final)
+            primary_message_id = message_ids[0] if message_ids else None
+            # Passamos esporte=None porque ele será extraído pela IA
+            processar_aposta(texto_final, None, tipster_final, primary_message_id)
 
-            await updates[0].message.reply_text(f"✅ Aposta(s) de {nome_esporte} processada(s)!")
+            # primeiro_msg = updates[0].message or updates[0].edited_message
+            # if primeiro_msg:
+            #     await primeiro_msg.reply_text(f"✅ Aposta processada!")
 
         except Exception as e:
-            print(f"❌ Erro ({nome_esporte}):", e)
-            await updates[0].message.reply_text("❌ Erro interno.")
+            print(f"❌ Erro:", e)
+            # primeiro_msg = updates[0].message or updates[0].edited_message
+            # if primeiro_msg:
+            #     await primeiro_msg.reply_text("❌ Erro interno.")
 
     async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Agrupamento por media_group_id (Albums do Telegram)
-        media_group_id = update.message.media_group_id
+        msg = get_msg(update)
+        if not msg:
+            return
+            
+        media_group_id = msg.media_group_id
         if media_group_id:
             if media_group_id not in ALBUM_BUFFER:
                 ALBUM_BUFFER[media_group_id] = []
@@ -155,37 +162,33 @@ def criar_handler(nome_esporte):
             
         # Mensagens normais sem album
         await processer_mensagens([update], context)
+        await asyncio.sleep(2.0) # Dar uma descansada entre as mensagens normais
 
     return handle_message
 
 # ===============================
-# MAIN MULTI-BOT
+# MAIN
 # ===============================
 async def main():
-    apps = []
+    app = (
+        ApplicationBuilder()
+        .token(TOKEN)
+        .read_timeout(60)
+        .write_timeout(60)
+        .connect_timeout(60)
+        .pool_timeout(60)
+        .build()
+    )
 
-    for bot in BOTS:
-        if not bot["token"]:
-            print(f"⚠️ Token não configurado para {bot['esporte']}. Verifique o arquivo .env!")
-            continue
+    handler = criar_handler("Geral")
+    app.add_handler(MessageHandler(filters.ALL & ~filters.UpdateType.EDITED_MESSAGE, handler))
+    app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, handler))
 
-        app = ApplicationBuilder().token(bot["token"]).build()
+    print("🚀 Bot rodando no modo grupo estrito...")
 
-        handler = criar_handler(bot["esporte"])
-        app.add_handler(MessageHandler(filters.ALL, handler))
-
-        apps.append(app)
-
-    if not apps:
-        print("❌ Nenhum bot inicializado. Configure os tokens no arquivo .env!")
-        return
-
-    print("🚀 Todos os bots rodando...")
-
-    # inicia todos
-    await asyncio.gather(*(app.initialize() for app in apps))
-    await asyncio.gather(*(app.start() for app in apps))
-    await asyncio.gather(*(app.updater.start_polling() for app in apps))
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
 
     # mantém rodando
     await asyncio.Event().wait()

@@ -46,11 +46,12 @@ CASAS_APOSTAS = {
     "casebre": "Casebre",
     "casebre vip": "Casebre",
     # Vaidebet
-    "vaidebet": "Vaidebet",
-    "vai de bet": "Vaidebet",
+    "vaidebet": "Vai de bet",
+    "vai de bet": "Vai de bet",
+    "vdb": "Vai de bet",
     # multibet
-    "multibet": "multibet",
-    "multi bet": "multibet",
+    "Multi": "Multi",
+    "multi": "Multi",
     # segurobet
     "segurobet": "segurobet",
     "seguro bet": "segurobet",
@@ -61,6 +62,7 @@ CASAS_APOSTAS = {
     "oley bet": "OLEYBET",
     # Esporte da sorte (variação)
     "esporte da sorte": "Esporte da Sorte",
+    "eds": "Esporte da Sorte",
     # Betou
     "betou": "Betou",
     # Jogo de Ouro
@@ -73,10 +75,8 @@ CASAS_APOSTAS = {
     # Sortenabet
     "sortenabet": "Sortenabet",
     "sortena bet": "Sortenabet",
-    # EsportivaVIP
-    "esportivavip": "EsportivaVIP",
-    "esportiva vip": "EsportivaVIP",
-    "esportiva": "EsportivaVIP",
+    # Esportiva
+    "esportiva": "Esportiva",
     # Novibet
     "novibet": "Novibet",
     "novi bet": "Novibet",
@@ -274,6 +274,7 @@ CASAS_APOSTAS = {
     "ona bet": "Ona",
     # Pagol
     "pagol": "Pagol",
+    "Pagol": "Pagol",
     # Pinnacle
     "pinnacle": "Pinnacle",
     # R7
