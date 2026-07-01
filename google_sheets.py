@@ -21,7 +21,7 @@ try:
     spreadsheet = client.open("GeogeTips")
     
     # abre a aba correta
-    NOME_ABA = "Junho26"
+    NOME_ABA = "Julho26"
     sheet = spreadsheet.worksheet(NOME_ABA)
     print(f"✅ Conectado à planilha GeogeTips, aba: {NOME_ABA}")
         
