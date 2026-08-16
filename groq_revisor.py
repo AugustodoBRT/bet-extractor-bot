@@ -66,28 +66,40 @@ def revisar_aposta_groq(texto):
     """
     Função única que extrai TODAS as apostas de uma mensagem.
     Sempre retorna um array de apostas.
+    Utiliza cascata de modelos para multiplicar o limite diário de requisições.
     """
-    try:
-        response = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=[
-                {"role": "system", "content": PROMPT_EXTRAIR},
-                {"role": "user", "content": texto}
-            ],
-            temperature=0,
-            max_tokens=4096
-        )
-    except groq.RateLimitError:
-        print("⏳ Rate limit atingido para llama-3.1-8b-instant. Tentando com llama-3.3-70b-versatile...")
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": PROMPT_EXTRAIR},
-                {"role": "user", "content": texto}
-            ],
-            temperature=0,
-            max_tokens=4096
-        )
+    modelos = [
+        "openai/gpt-oss-20b",
+        "llama-3.3-70b-versatile",
+        "qwen/qwen3.6-27b"
+    ]
+    
+    response = None
+    ultimo_erro = None
+    
+    for modelo in modelos:
+        try:
+            response = client.chat.completions.create(
+                model=modelo,
+                messages=[
+                    {"role": "system", "content": PROMPT_EXTRAIR},
+                    {"role": "user", "content": texto}
+                ],
+                temperature=0,
+                max_tokens=4096
+            )
+            break
+        except groq.RateLimitError as e:
+            ultimo_erro = e
+            print(f"⏳ Rate limit atingido para {modelo}. Alternando para o próximo modelo da lista...")
+            continue
+        except Exception as e:
+            ultimo_erro = e
+            print(f"⚠️ Erro no modelo {modelo}: {e}. Tentando o próximo...")
+            continue
+
+    if response is None:
+        raise ultimo_erro
 
     conteudo = response.choices[0].message.content.strip()
 
