@@ -69,8 +69,8 @@ def revisar_aposta_groq(texto):
     Utiliza cascata de modelos para multiplicar o limite diário de requisições.
     """
     modelos = [
-        "openai/gpt-oss-20b",
         "llama-3.3-70b-versatile",
+        "openai/gpt-oss-20b",
         "qwen/qwen3.6-27b"
     ]
     
