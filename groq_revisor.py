@@ -69,12 +69,12 @@ def revisar_aposta_groq(texto):
     Utiliza cascata de modelos para multiplicar o limite diário de requisições.
     """
     modelos = [
-        "llama-3.3-70b-versatile",
+        "qwen/qwen3.6-27b",
         "openai/gpt-oss-20b",
-        "qwen/qwen3.6-27b"
+        "openai/gpt-oss-120b",
+        "llama3-70b-8192"
     ]
     
-    response = None
     ultimo_erro = None
     
     for modelo in modelos:
@@ -88,39 +88,37 @@ def revisar_aposta_groq(texto):
                 temperature=0,
                 max_tokens=4096
             )
-            break
+            
+            conteudo = response.choices[0].message.content.strip()
+            print(f"\n🧠 RESPOSTA BRUTA DA IA ({modelo}):\n", conteudo, "\n")
+            
+            inicio = conteudo.find("[")
+            fim = conteudo.rfind("]") + 1
+
+            if inicio == -1 or fim == 0:
+                raise ValueError("JSON array não encontrado na resposta da IA")
+
+            json_str = conteudo[inicio:fim]
+            apostas = json.loads(json_str)
+            
+            # Garante que é uma lista
+            if not isinstance(apostas, list):
+                apostas = [apostas]
+            
+            return apostas
+            
         except groq.RateLimitError as e:
             ultimo_erro = e
-            print(f"⏳ Rate limit atingido para {modelo}. Alternando para o próximo modelo da lista...")
+            print(f"⏳ Rate limit atingido para {modelo}. Alternando para o próximo modelo...")
+            continue
+        except (json.JSONDecodeError, ValueError) as e:
+            ultimo_erro = e
+            print(f"⚠️ IA ({modelo}) gerou resposta com formato de JSON inválido ({e}). Tentando próximo modelo...")
             continue
         except Exception as e:
             ultimo_erro = e
-            print(f"⚠️ Erro no modelo {modelo}: {e}. Tentando o próximo...")
+            print(f"⚠️ Erro no modelo {modelo}: {e}. Tentando próximo modelo...")
             continue
 
-    if response is None:
-        raise ultimo_erro
-
-    conteudo = response.choices[0].message.content.strip()
-
-    print("\n🧠 RESPOSTA BRUTA DA IA:\n", conteudo, "\n")
-
-    try:
-        inicio = conteudo.find("[")
-        fim = conteudo.rfind("]") + 1
-
-        if inicio == -1 or fim == 0:
-            raise ValueError("JSON array não encontrado na resposta da IA")
-
-        json_str = conteudo[inicio:fim]
-        apostas = json.loads(json_str)
-        
-        # Garante que é uma lista
-        if not isinstance(apostas, list):
-            apostas = [apostas]
-        
-        return apostas
-
-    except Exception as e:
-        print("⚠️ Falha ao parsear JSON:", e)
-        raise
+    print("⚠️ Todos os modelos da IA falharam. Lançando último erro...")
+    raise ultimo_erro
