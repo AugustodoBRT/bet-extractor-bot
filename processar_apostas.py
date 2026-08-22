@@ -230,19 +230,35 @@ def processar_aposta_individual(dados, texto, esporte_fixo=None, tipster=None, c
         try:
             valor_num = float(valor_convertido.replace(".", "").replace(",", ".").strip())
             
-            # Usa o limite extraído sequencialmente da linha (se houver)
+            # 1. Usa o limite extraído sequencialmente da linha (se houver)
             limite_valor = dados_processado.get("limite_seq")
+            
+            # 2. Se não achou na linha específica, busca globalmente no texto da mensagem
+            if limite_valor is None:
+                limite_global_match = re.search(
+                    r'(?:limite|lim|limit|max|máx|teto)(?:\s*(?:de|max|máx|da bet)?\s*[:=]?\s*(?:r\$\s*)?)\s*(\d+[.,]?\d*)', 
+                    texto, 
+                    re.IGNORECASE
+                )
+                if limite_global_match:
+                    try:
+                        limite_valor = float(limite_global_match.group(1).replace(",", "."))
+                        print(f"💰 Limite global identificado no texto da mensagem: R$ {limite_valor:.2f}")
+                    except ValueError:
+                        pass
+            
+            # 3. Aplica o limite se o valor calculado for maior que o limite
             if limite_valor is not None:
                 if valor_num > limite_valor:
-                    print(f"⚠️ Valor calculado ({valor_num:.2f}) ultrapassa o limite da bet ({limite_valor:.2f}). Usando o limite.")
+                    print(f"⚠️ Valor calculado (R$ {valor_num:.2f}) ultrapassa o limite da bet (R$ {limite_valor:.2f}). Limitando para R$ {limite_valor:.2f}.")
                     valor_convertido = f"{limite_valor:,.2f}".replace(".", ",")
             else:
-                # Proteção global (aumentado para evitar erros com apostas propositais longas)
-                if valor_num > 2000:
+                # Proteção global contra valores absurdos
+                if valor_num > 5000:
                     print(f"⚠️ Valor descartado por ser irreal: {valor_convertido} (original: {valor_ia})")
                     valor_convertido = ""
-        except:
-            pass
+        except Exception as e:
+            print(f"⚠️ Erro ao verificar limite: {e}")
     
     dados_processado["valor"] = valor_convertido
     dados_processado["unidades"] = str(valor_base).strip().replace('u', '').replace('%', '') if valor_base else ""
@@ -299,6 +315,153 @@ def processar_aposta_individual(dados, texto, esporte_fixo=None, tipster=None, c
     dados_processado["casa"] = casa_final
     return dados_processado
 
+def tentar_extracao_direta(mensagem_usuario):
+    """
+    Tenta extrair os dados da(s) aposta(s) diretamente do texto do usuário,
+    sem precisar de IA nem OCR, caso a mensagem já contenha a TIP (mercado).
+    
+    Retorna uma lista de dicts com as apostas se todas as apostas no texto
+    puderem ser extraídas com sucesso com TIP preenchida.
+    Retorna None se a mensagem estiver no formato antigo (sem TIP) ou incompleta.
+    """
+    if not mensagem_usuario:
+        return None
+        
+    texto_limpo = str(mensagem_usuario).split("\n\n-----\n\n")[0].strip()
+    
+    # Remove linhas de controle/debug do Telegram (ex: Message ID, etc.)
+    linhas_totais = [
+        l.strip() for l in texto_limpo.split("\n") 
+        if l.strip() and not l.startswith("Message ID:") and not l.startswith("🆔") and not l.startswith("-----")
+    ]
+    
+    if not linhas_totais:
+        return None
+
+    # Verifica se há pelo menos um indicador de odd no texto
+    indices_odd = []
+    for i, linha in enumerate(linhas_totais):
+        if re.search(r'(?:@|odd)\s*(\d+[.,]?\d*)', linha, re.IGNORECASE):
+            indices_odd.append(i)
+            
+    if not indices_odd:
+        return None # Sem odd -> não é aposta completa
+
+    # Se tiver apenas 1 aposta (1 linha de odd):
+    if len(indices_odd) == 1:
+        idx_odd = indices_odd[0]
+        
+        # Para ter TIP, a odd deve estar no mínimo no índice 3:
+        # Linha 0: Esporte
+        # Linha 1: Partida
+        # Linha 2 até (idx_odd-1): TIP (mercado)
+        # Linha idx_odd: Unidade/Odd
+        if idx_odd < 3:
+            return None # Não tem linha de TIP (formato antigo de 4 linhas: Esporte, Partida, Odd, Casa)
+            
+        esporte = linhas_totais[0]
+        # Limpa emojis no início do esporte se houver (ex: "⚽ Futebol" -> "Futebol")
+        esporte_limpo = re.sub(r'^[^\w\s]+\s*', '', esporte).strip()
+        if not esporte_limpo:
+            esporte_limpo = esporte
+            
+        partida = linhas_totais[1]
+        
+        # Linhas entre a partida e a odd formam a TIP
+        linhas_tip = linhas_totais[2:idx_odd]
+        tip = " & ".join(linhas_tip).strip()
+        if not tip:
+            return None
+            
+        linha_odd = linhas_totais[idx_odd]
+        
+        # Casa (linha logo abaixo da odd)
+        casa = ""
+        if idx_odd + 1 < len(linhas_totais):
+            casa = linhas_totais[idx_odd + 1]
+            
+        odd_match = re.search(r'(?:@|odd)\s*(\d+[.,]?\d*)', linha_odd, re.IGNORECASE)
+        odd = odd_match.group(1) if odd_match else ""
+        
+        valor_match = re.search(r'(\d+[.,]?\d*\s*[%u])', linha_odd, re.IGNORECASE)
+        valor = valor_match.group(1) if valor_match else ""
+        
+        limite_match = re.search(
+            r'(?:limite|lim|limit|max|máx|teto)(?:\s*(?:de|max|máx|da bet)?\s*[:=]?\s*(?:r\$\s*)?)\s*(\d+[.,]?\d*)', 
+            texto_limpo, 
+            re.IGNORECASE
+        )
+        limite_seq = float(limite_match.group(1).replace(",", ".")) if limite_match else None
+        
+        resultado = detectar_resultado(texto_limpo)
+        
+        return [{
+            "esporte": esporte_limpo,
+            "partida": partida,
+            "tip": tip,
+            "odd": odd,
+            "valor": valor,
+            "casa": casa,
+            "resultado": resultado,
+            "limite_seq": limite_seq
+        }]
+
+    # Se tiver múltiplas apostas (múltiplas linhas de odd):
+    blocos = [b.strip() for b in texto_limpo.split("\n\n") if b.strip()]
+    if len(blocos) == len(indices_odd):
+        apostas_multiplas = []
+        for bloco in blocos:
+            linhas_bloco = [
+                l.strip() for l in bloco.split("\n") 
+                if l.strip() and not l.startswith("Message ID:") and not l.startswith("🆔")
+            ]
+            idx_odd_bloco = -1
+            for i, linha in enumerate(linhas_bloco):
+                if re.search(r'(?:@|odd)\s*(\d+[.,]?\d*)', linha, re.IGNORECASE):
+                    idx_odd_bloco = i
+                    break
+            
+            if idx_odd_bloco < 3:
+                return None # Pelo menos uma aposta não tem TIP -> volta para o modo IA
+                
+            esporte = linhas_bloco[0]
+            esporte_limpo = re.sub(r'^[^\w\s]+\s*', '', esporte).strip() or esporte
+            partida = linhas_bloco[1]
+            tip = " & ".join(linhas_bloco[2:idx_odd_bloco]).strip()
+            if not tip:
+                return None
+                
+            linha_odd = linhas_bloco[idx_odd_bloco]
+            casa = linhas_bloco[idx_odd_bloco + 1] if idx_odd_bloco + 1 < len(linhas_bloco) else ""
+            
+            odd_match = re.search(r'(?:@|odd)\s*(\d+[.,]?\d*)', linha_odd, re.IGNORECASE)
+            odd = odd_match.group(1) if odd_match else ""
+            valor_match = re.search(r'(\d+[.,]?\d*\s*[%u])', linha_odd, re.IGNORECASE)
+            valor = valor_match.group(1) if valor_match else ""
+            
+            limite_bloco_match = re.search(
+                r'(?:limite|lim|limit|max|máx|teto)(?:\s*(?:de|max|máx|da bet)?\s*[:=]?\s*(?:r\$\s*)?)\s*(\d+[.,]?\d*)', 
+                bloco, 
+                re.IGNORECASE
+            )
+            limite_bloco = float(limite_bloco_match.group(1).replace(",", ".")) if limite_bloco_match else None
+            
+            resultado = detectar_resultado(bloco)
+            
+            apostas_multiplas.append({
+                "esporte": esporte_limpo,
+                "partida": partida,
+                "tip": tip,
+                "odd": odd,
+                "valor": valor,
+                "casa": casa,
+                "resultado": resultado,
+                "limite_seq": limite_bloco
+            })
+        return apostas_multiplas
+
+    return None
+
 def processar_aposta(texto, esporte_fixo=None, tipster=None, message_id=None):
     print("="*50)
     print("📩 TEXTO RECEBIDO PELO PROCESSADOR:\n")
@@ -324,33 +487,40 @@ def processar_aposta(texto, esporte_fixo=None, tipster=None, message_id=None):
         casa_ultima_linha = linhas_msg[-1]
         
     print(f"🏠 Casa identificada pelo script: {casa_ultima_linha}")
-    # A casa será extraída e normalizada individualmente por aposta
     casa_global = ""
-
 
     apostas_list = []
 
-    # 🤖 IA - Sempre retorna um array de apostas
-    try:
-        apostas_list = revisar_aposta_groq(texto)
-        if not isinstance(apostas_list, list):
-            apostas_list = [apostas_list]
-        
-        # Remove apostas EXATAMENTE duplicadas (IA retornou mesma aposta 2x)
-        apostas_list = remover_apostas_duplicadas(apostas_list)
-        
-        print(f"🤖 IA OK - {len(apostas_list)} aposta(s) extraída(s)")
+    # ⚡ 1. TENTA MODO DIRETO (Sem IA e sem OCR se a mensagem já contém a TIP)
+    apostas_diretas = tentar_extracao_direta(mensagem_usuario)
+    if apostas_diretas:
+        print("\n" + "⚡"*25)
+        print(f"⚡ MODO DIRETO ATIVADO - Mensagem completa com TIP! ({len(apostas_diretas)} aposta(s) extraída(s) sem IA)")
+        print("⚡"*25 + "\n")
+        apostas_list = apostas_diretas
+    else:
+        # 🤖 2. MODO IA (Fallback caso a TIP não esteja no texto e precise de OCR + Groq)
+        print("🤖 Mensagem sem TIP no texto. Acionando IA (Groq)...")
+        try:
+            apostas_list = revisar_aposta_groq(texto)
+            if not isinstance(apostas_list, list):
+                apostas_list = [apostas_list]
+            
+            # Remove apostas EXATAMENTE duplicadas (IA retornou mesma aposta 2x)
+            apostas_list = remover_apostas_duplicadas(apostas_list)
+            
+            print(f"🤖 IA OK - {len(apostas_list)} aposta(s) extraída(s)")
 
-    except Exception as e:
-        print("🤖 IA falhou:", e)
-        # Fallback: cria uma aposta vazia
-        apostas_list = [{
-            "partida": "",
-            "tip": "",
-            "odd": "",
-            "valor": "",
-            "casa": ""
-        }]
+        except Exception as e:
+            print("🤖 IA falhou:", e)
+            # Fallback: cria uma aposta vazia
+            apostas_list = [{
+                "partida": "",
+                "tip": "",
+                "odd": "",
+                "valor": "",
+                "casa": ""
+            }]
 
     # 🔄 Processa determinístico (lista na mensagem)
     lista_valores_seq = []
@@ -389,11 +559,18 @@ def processar_aposta(texto, esporte_fixo=None, tipster=None, message_id=None):
         if odd_match:
             odd_seq = odd_match.group(1)
             
-        # Procura limite no fragmento, como "limite 100"
+        # Procura limite no fragmento, como "limite 100", "limite: 50", "limite: R$ 50", "max 50"
         limite_seq = None
-        limite_match = re.search(r'limite\s+(\d+[.,]?\d*)', fragmento, re.IGNORECASE)
+        limite_match = re.search(
+            r'(?:limite|lim|limit|max|máx|teto)(?:\s*(?:de|max|máx|da bet)?\s*[:=]?\s*(?:r\$\s*)?)\s*(\d+[.,]?\d*)', 
+            fragmento, 
+            re.IGNORECASE
+        )
         if limite_match:
-            limite_seq = float(limite_match.group(1).replace(",", "."))
+            try:
+                limite_seq = float(limite_match.group(1).replace(",", "."))
+            except ValueError:
+                pass
                     
         lista_valores_seq.append({"valor": val, "resultado": resultado, "odd": odd_seq, "limite": limite_seq})
     

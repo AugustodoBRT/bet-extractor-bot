@@ -8,7 +8,7 @@ load_dotenv()
 
 import config
 from ocr import extrair_texto
-from processar_apostas import processar_aposta
+from processar_apostas import processar_aposta, tentar_extracao_direta
 
 # ===============================
 # CONFIG DOS BOTS
@@ -80,34 +80,39 @@ def criar_handler(nome_esporte):
 
 
 
-            # Filtro Estrito: Verifica se tem foto (aposta sempre tem OCR da tip)
+            # Verifica se já tem a TIP no texto da mensagem (Modo Direto)
+            texto_captions = "\n".join(partes)
+            tem_tip_direta = bool(tentar_extracao_direta(texto_captions))
+            
+            # Se não tem TIP no texto e também não tem foto, não há como extrair a TIP
             tem_foto = any(get_msg(m).photo for m in updates if get_msg(m))
-            if not tem_foto:
-                return # Ignora silenciosamente
+            if not tem_tip_direta and not tem_foto:
+                return # Ignora silenciosamente se não tiver foto e nem TIP no texto
                 
-            # 2. Extrair imagens sequencialmente (espera as tarefas)
-            for update in updates:
-                msg = get_msg(update)
-                if msg and msg.photo:
-                    # await msg.reply_text("⏳ Lendo imagem...")
-                    
-                    foto_alta_resolucao = msg.photo[-1]
-                    try:
-                        file = await foto_alta_resolucao.get_file()
-                        caminho = f"{config.PASTA_IMAGENS}/{file.file_id}.jpg"
-                        await file.download_to_drive(caminho)
-                        
-                        ocr = extrair_texto(caminho)
-                        if ocr:
-                            partes.append(f"[IMAGEM]:\n{ocr}")
-                            print("✅ OCR da imagem concluído")
+            # 2. Extrair imagens sequencialmente (Apenas se NÃO tiver a TIP no texto)
+            if not tem_tip_direta:
+                for update in updates:
+                    msg = get_msg(update)
+                    if msg and msg.photo:
+                        foto_alta_resolucao = msg.photo[-1]
+                        try:
+                            file = await foto_alta_resolucao.get_file()
+                            caminho = f"{config.PASTA_IMAGENS}/{file.file_id}.jpg"
+                            await file.download_to_drive(caminho)
                             
-                        # Apaga a imagem logo após o OCR para não lotar o disco
-                        if os.path.exists(caminho):
-                            os.remove(caminho)
-                            
-                    except Exception as e:
-                        print(f"⚠️ Erro ao processar imagem: {e}")
+                            ocr = extrair_texto(caminho)
+                            if ocr:
+                                partes.append(f"[IMAGEM]:\n{ocr}")
+                                print("✅ OCR da imagem concluído")
+                                
+                            # Apaga a imagem logo após o OCR para não lotar o disco
+                            if os.path.exists(caminho):
+                                os.remove(caminho)
+                                
+                        except Exception as e:
+                            print(f"⚠️ Erro ao processar imagem: {e}")
+            else:
+                print("⚡ Mensagem completa com TIP detectada: OCR e download de imagem ignorados.")
 
             if not partes:
                 primeiro_msg = get_msg(updates[0])
