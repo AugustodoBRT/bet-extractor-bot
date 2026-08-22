@@ -73,12 +73,34 @@ def detectar_resultado(texto):
     return "PENDENTE"
 
 
+def converter_valor_para_float(v_str):
+    """Converte com segurança qualquer string de valor monetário ou decimal para float."""
+    if not v_str:
+        return 0.0
+    s = str(v_str).replace("R$", "").replace("r$", "").strip()
+    # Se tiver vírgula e ponto (ex: 1.000,00 ou 1,000.00)
+    if "," in s and "." in s:
+        if s.rfind(",") > s.rfind("."): # padrão brasileiro: 1.000,00
+            s = s.replace(".", "").replace(",", ".")
+        else: # padrão americano: 1,000.00
+            s = s.replace(",", "")
+    # Se tiver múltiplas vírgulas (ex: erro de formatação 1,000,00)
+    elif s.count(",") > 1:
+        partes = s.split(",")
+        s = "".join(partes[:-1]) + "." + partes[-1]
+    elif "," in s:
+        s = s.replace(",", ".")
+    try:
+        return float(s)
+    except:
+        return 0.0
+
 def calcular_valor(valor_raw):
     """
     Converte porcentagem/unidade para valor em reais baseado na banca.
-    Ex: "0.5%" ou "0.5u" com VALOR_UNIDADE=2.0 → "R$ 1,00"
-        "2%" ou "2u"   com VALOR_UNIDADE=2.0 → "R$ 4,00"
-        "1.5%" ou "1.5u" com VALOR_UNIDADE=2.0 → "R$ 3,00"
+    Ex: "0.5%" ou "0.5u" com VALOR_UNIDADE=100.0 → "50,00"
+        "2%" ou "2u"   com VALOR_UNIDADE=100.0 → "200,00"
+        "10u"          com VALOR_UNIDADE=100.0 → "1000,00"
     Se não for porcentagem nem unidade, retorna como está.
     """
     if not valor_raw:
@@ -86,15 +108,15 @@ def calcular_valor(valor_raw):
     
     valor_str = valor_raw.strip()
     
-    # Tenta extrair porcentagem/unidade (ex: "0.5%", "2u", "1,5%", "0,75u")
+    # Tenta extrair porcentagem/unidade (ex: "0.5%", "2u", "1,5%", "0,75u", "10u")
     match = re.search(r'(\d+[.,]?\d*)\s*[%u]', valor_str)
     if match:
         pct_str = match.group(1).replace(",", ".")
         try:
             pct = float(pct_str)
             valor_reais = pct * VALOR_UNIDADE
-            # Formata como "X,XX" sem o R$
-            return f"{valor_reais:,.2f}".replace(".", ",")
+            # Formata como "1000,00" ou "50,00" (sem vírgula de milhar extra)
+            return f"{valor_reais:.2f}".replace(".", ",")
         except ValueError:
             pass
     
@@ -228,7 +250,7 @@ def processar_aposta_individual(dados, texto, esporte_fixo=None, tipster=None, c
     # Verifica limite da mensagem para não apostar muito alto
     if valor_convertido:
         try:
-            valor_num = float(valor_convertido.replace(".", "").replace(",", ".").strip())
+            valor_num = converter_valor_para_float(valor_convertido)
             
             # 1. Usa o limite extraído sequencialmente da linha (se houver)
             limite_valor = dados_processado.get("limite_seq")
@@ -248,10 +270,10 @@ def processar_aposta_individual(dados, texto, esporte_fixo=None, tipster=None, c
                         pass
             
             # 3. Aplica o limite se o valor calculado for maior que o limite
-            if limite_valor is not None:
+            if limite_valor is not None and limite_valor > 0:
                 if valor_num > limite_valor:
                     print(f"⚠️ Valor calculado (R$ {valor_num:.2f}) ultrapassa o limite da bet (R$ {limite_valor:.2f}). Limitando para R$ {limite_valor:.2f}.")
-                    valor_convertido = f"{limite_valor:,.2f}".replace(".", ",")
+                    valor_convertido = f"{limite_valor:.2f}".replace(".", ",")
             else:
                 # Proteção global contra valores absurdos
                 if valor_num > 5000:
